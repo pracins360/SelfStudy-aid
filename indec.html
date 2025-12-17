@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Tool - HQ</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; color: #333; line-height: 1.5; }
+        .box { border: 1px solid #e0e0e0; padding: 25px; border-radius: 12px; background: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .hidden { display: none; }
+        h2 { margin-top: 0; color: #007bff; }
+        input, select, textarea { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        button { width: 100%; background: #007bff; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .wa-btn { background: #25D366; margin-top: 10px; }
+        .wa-btn:hover { background: #128C7E; }
+        #timer-display { font-size: 0.9em; color: #666; margin-bottom: 15px; }
+        #status-msg { font-style: italic; color: #555; margin: 10px 0; }
+        hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+    <div id="login-section" class="box">
+        <h2>Toegang Tool</h2>
+        <p>Voer de passcode in die je via WhatsApp hebt ontvangen.</p>
+        <input type="text" id="passcode" placeholder="Code (bijv. ses123 of day456)">
+        <button onclick="login()">Start Sessie</button>
+        <p id="login-error" style="color:red; font-size: 0.8em;"></p>
+    </div>
+
+    <div id="tool-section" class="box hidden">
+        <h2 id="welcome-msg">Welkom</h2>
+        <div id="timer-display">Sessie actief</div>
+        <hr>
+
+        <h3>1. Upload Foto's (Max 10)</h3>
+        <input type="file" id="image-upload" multiple accept="image/*" onchange="handleFiles()">
+        <p id="status-msg">Wacht op bestanden...</p>
+
+        <h3>2. Wat wil je maken?</h3>
+        <select id="output-type">
+            <option value="samenvatting">Samenvatting (Kernpunten)</option>
+            <option value="flashcards">Flashcards (Vraag/Antwoord Tabel)</option>
+            <option value="sommen">Sommen & Uitwerkingen (Stapsgewijs)</option>
+            <option value="deepdive">Deep Dive Script (Audio/Uitleg)</option>
+        </select>
+        
+        <button id="generate-btn" onclick="generatePrompt()" disabled>Maak Master Prompt</button>
+        
+        <div id="result-section" class="hidden">
+            <hr>
+            <h3>3. Kopieer & Gebruik AI</h3>
+            <p style="font-size: 0.8em;">Klik op de knop hieronder, ga naar Gemini en plak de tekst (Ctrl+V).</p>
+            <textarea id="prompt-output" readonly placeholder="Je prompt verschijnt hier..."></textarea>
+            <button onclick="copyAndOpen()">Kopieer & Open Gemini</button>
+        </div>
+
+        <hr>
+        <h3>4. Live Begeleiding</h3>
+        <button class="wa-btn" onclick="contactTeacher()">One-on-One met docent (WhatsApp)</button>
+    </div>
+
+    <script>
+        let sessionExpiry = null;
+        let extractedText = "";
+
+        function login() {
+            const code = document.getElementById('passcode').value.toLowerCase();
+            const now = new Date().getTime();
+
+            if (code.startsWith("ses")) {
+                sessionExpiry = now + (120 * 60 * 1000);
+                startApp("Individuele Sessie");
+            } else if (code.startsWith("day")) {
+                let tomorrow7am = new Date();
+                tomorrow7am.setDate(tomorrow7am.getDate() + 1);
+                tomorrow7am.setHours(7, 0, 0, 0);
+                sessionExpiry = tomorrow7am.getTime();
+                startApp("Dagpas Actief");
+            } else {
+                document.getElementById('login-error').innerText = "Ongeldige code. Vraag een nieuwe via WhatsApp.";
+            }
+        }
+
+        function startApp(msg) {
+            document.getElementById('login-section').classList.add('hidden');
+            document.getElementById('tool-section').classList.remove('hidden');
+            document.getElementById('welcome-msg').innerText = msg;
+            
+            // Check timer elke minuut
+            setInterval(() => {
+                const now = new Date().getTime();
+                if (now > sessionExpiry) {
+                    alert("Je sessie is verlopen!");
+                    location.reload();
+                }
+            }, 60000);
+        }
+
+        async function handleFiles() {
+            const fileInput = document.getElementById('image-upload');
+            const files = fileInput.files;
+            const statusLabel = document.getElementById('status-msg');
+            const generateBtn = document.getElementById('generate-btn');
+
+            if (files.length > 10) {
+                alert("Je mag maximaal 10 foto's per sessie uploaden.");
+                fileInput.value = "";
+                return;
+            }
+
+            generateBtn.disabled = true;
+            extractedText = "";
+            
+            for (let i = 0; i < files.length; i++) {
+                statusLabel.innerText = `📷 Scannen van foto ${i + 1} van ${files.length}...`;
+                try {
+                    const result = await Tesseract.recognize(files[i], 'nld+eng');
+                    extractedText += `\n--- Bron Afbeelding ${i+1} ---\n${result.data.text}\n`;
+                } catch (e) {
+                    console.error("OCR fout:", e);
+                }
+            }
+
+            statusLabel.innerText = "✅ Alle foto's zijn gescand!";
+            generateBtn.disabled = false;
+        }
+
+        function generatePrompt() {
+            const type = document.getElementById('output-type').value;
+            let instructie = "";
+
+            if (type === 'samenvatting') instructie = "Maak een gestructureerde samenvatting met bullet points.";
+            if (type === 'flashcards') instructie = "Maak een tabel met vragen aan de linkerkant en antwoorden aan de rechterkant, geschikt voor flashcards.";
+            if (type === 'sommen') instructie = "Vind de wiskunde/rekenopdrachten en leg stap voor stap de uitwerking uit.";
+            if (type === 'deepdive') instructie = "Schrijf een diepgaand script voor een audio-uitleg (Deep Dive). Praat als een privédocent die de stof simpel uitlegt.";
+
+            const finalePrompt = `ROL: Expert Tutor.\nTAAK: ${instructie}\n\nCONTEXT (Tekst uit mijn foto's):\n${extractedText}`;
+            
+            document.getElementById('prompt-output').value = finalePrompt;
+            document.getElementById('result-section').classList.remove('hidden');
+        }
+
+        function copyAndOpen() {
+            const copyText = document.getElementById("prompt-output");
+            copyText.select();
+            navigator.clipboard.writeText(copyText.value);
+            alert("Gekopieerd! Gemini opent nu.");
+            window.open("https://gemini.google.com/app", "_blank");
+        }
+
+        function contactTeacher() {
+            const phoneNumber = "31600000000"; // <-- VUL HIER JE EIGEN NUMMER IN
+            const message = encodeURIComponent("Hoi! Ik heb een sessie in de tool en wil graag extra One-on-One hulp.");
+            window.open(`https://wa.me/${phoneNumber}?text=${message}`, "_blank");
+        }
+    </script>
+</body>
+</html>
